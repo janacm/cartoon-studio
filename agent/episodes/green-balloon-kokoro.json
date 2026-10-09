@@ -1,0 +1,48 @@
+{
+  "name": "The Green Balloon (Kokoro)",
+  "scene": "backyard",
+  "characters": [
+    {
+      "id": "jane",
+      "svg": "jane",
+      "x": 0.27,
+      "y": 0.98,
+      "scale": 1.9,
+      "voice": "kokoro:af_heart"
+    },
+    {
+      "id": "max",
+      "svg": "max",
+      "x": 0.71,
+      "y": 0.98,
+      "scale": 1.75,
+      "voice": "kokoro:am_fenrir@1.1"
+    }
+  ],
+  "lines": [
+    {
+      "speaker": "max",
+      "text": "Jane, look! There's a green balloon stuck in that tree."
+    },
+    {
+      "speaker": "jane",
+      "text": "Oh no. Somebody must have lost it. Can we get it down?"
+    },
+    {
+      "speaker": "max",
+      "text": "I can't reach it. Maybe if I jump really, really high."
+    },
+    {
+      "speaker": "jane",
+      "text": "Wait, I have an idea. Let's ask the wind to help us."
+    },
+    {
+      "speaker": "max",
+      "text": "Ask the wind? That's silly. Hey, it worked! Here it comes!"
+    },
+    {
+      "speaker": "jane",
+      "text": "Now let's find out who lost it. Teamwork!"
+    }
+  ]
+}

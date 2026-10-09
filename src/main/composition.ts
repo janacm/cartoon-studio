@@ -5,6 +5,16 @@ import type { Show } from '../shared/show';
 import { showWorkingDir } from './showStore';
 import { readLineMeta } from './tts';
 import { buildMouthCues, type Cue } from './cues';
+import {
+  MOTION_CSS,
+  actorHtml,
+  buildMotionPlan,
+  motionIntro,
+  motionScript,
+  prepareCharacterSvg,
+  propsHtml,
+  type MotionInput,
+} from './motion';
 
 const STAGE_W = 1920;
 const STAGE_H = 1080;
@@ -58,6 +68,9 @@ export type BuildOptions = {
   // render pipeline (which seeks the timeline per frame) captures the
   // speaker-follow pans.
   viewMode?: ViewMode;
+  // Character motion, props and camera moves (see ./motion.ts). Unset means
+  // no motion layer at all, which is what the desktop app builds today.
+  motion?: MotionInput;
 };
 
 export async function buildComposition(
@@ -70,7 +83,8 @@ export async function buildComposition(
 
   const segments: Segment[] = [];
   const missing: string[] = [];
-  let cursor = 0;
+  const motion = options.motion;
+  let cursor = motion ? motionIntro(motion, show) : 0;
 
   for (const line of show.dialogue) {
     const meta = await readLineMeta(show.id, line.id);
@@ -80,7 +94,10 @@ export async function buildComposition(
     }
     const duration = +(meta.durationMs / 1000).toFixed(3);
     const words = meta.words;
-    const cues = buildMouthCues(words, duration);
+    // Prefer cues computed from the audio itself (Rhubarb, written by
+    // agent/render-episode.ts); fall back to the word-timing heuristic.
+    const cues =
+      (meta as { cues?: Cue[] }).cues ?? buildMouthCues(words, duration);
     segments.push({
       id: line.id,
       speaker: line.speakerId,
@@ -94,7 +111,11 @@ export async function buildComposition(
     cursor += duration + GAP_S;
   }
 
-  const totalDuration = +Math.max(0, cursor - GAP_S + 0.5).toFixed(3);
+  const audioDuration = +Math.max(0, cursor - GAP_S + 0.5).toFixed(3);
+  const motionPlan = motion
+    ? buildMotionPlan(show, segments, motion, audioDuration)
+    : null;
+  const totalDuration = motionPlan ? motionPlan.duration : audioDuration;
   const speakers = [...new Set(segments.map((s) => s.speaker))];
   // Character positions (normalized 0..1) are needed in the iframe so the
   // portrait-mode camera can look up the active speaker's stage coordinates
@@ -115,7 +136,8 @@ export async function buildComposition(
   const sceneJsPath = path.join(dir, 'scene.js');
   await fs.writeFile(
     sceneJsPath,
-    `window.SCENE_DATA = ${JSON.stringify(sceneData, null, 2)};\n`,
+    `window.SCENE_DATA = ${JSON.stringify(sceneData, null, 2)};\n` +
+      (motionPlan ? `window.MOTION_PLAN = ${JSON.stringify(motionPlan)};\n` : ''),
   );
 
   // Copy GSAP into the show dir so both the in-app preview and the
@@ -129,7 +151,7 @@ export async function buildComposition(
   // it seeks the registered timeline per frame) and the mouth animates.
   await fs.writeFile(path.join(dir, 'player.js'), PLAYER_JS, 'utf8');
 
-  const html = renderHtml(show, segments, totalDuration, viewMode);
+  const html = renderHtml(show, segments, totalDuration, viewMode, motion);
   // Write as index.html so hyperframes render auto-discovers the composition
   // when we point it at the show working dir.
   const compPath = path.join(dir, 'index.html');
@@ -149,6 +171,7 @@ function renderHtml(
   segments: Segment[],
   totalDuration: number,
   viewMode: ViewMode,
+  motion?: MotionInput,
 ): string {
   // The output viewport is what HyperFrames renders. The stage inside is
   // always 1920x1080 — character positions (normalized 0..1) resolve against
@@ -166,13 +189,17 @@ function renderHtml(
       const left = (c.x * 100).toFixed(2);
       const top = (c.y * 100).toFixed(2);
       const baseW = STAGE_W * 0.2;
-      const inlineSvg = ensureSvgId(c.svg, `${c.id}-rig`);
+      const svg = motion ? prepareCharacterSvg(c.svg, c.id, motion) : c.svg;
+      const inlineSvg = ensureSvgId(svg, `${c.id}-rig`);
       return `
         <div class="slot" style="left:${left}%;top:${top}%;width:${baseW}px;transform:translate(-50%,-100%) scale(${c.scale.toFixed(2)});z-index:${Math.round(c.y * 1000)};">
-          ${inlineSvg}
+          ${motion ? actorHtml(c.id, inlineSvg) : inlineSvg}
         </div>`;
     })
     .join('\n');
+  // With motion, the stage contents sit in a .cam wrapper for push-ins.
+  const camOpen = motion ? '<div class="cam">' : '';
+  const camClose = motion ? `${propsHtml(motion)}\n        </div>` : '';
 
   const audioTags = segments
     .map(
@@ -220,14 +247,14 @@ function renderHtml(
       .slot { position: absolute; transform-origin: bottom center; }
       .slot svg { width: 100%; height: auto; display: block; }
       .mouth-group { opacity: 0; }
-      .mouth-group.mouth-X { opacity: 1; }
+      .mouth-group.mouth-X { opacity: 1; }${motion ? MOTION_CSS : ''}
     </style>
   </head>
   <body>
     <div class="viewport" data-composition-id="${show.id}" data-width="${outW}" data-height="${outH}" data-start="0" data-duration="${totalDuration}" data-view-mode="${viewMode}">
-      <div class="stage">
+      <div class="stage">${camOpen}
         ${bgImg}
-        ${characters}
+        ${characters}${camClose}
       </div>
 ${audioTags}
       <script src="scene.js"></script>
@@ -444,7 +471,7 @@ ${audioTags}
           // Expose to the preview-only player.js for the RAF loop.
           window.__agentPark = { tl: tl, duration: S.duration };
         })();
-      </script>
+      </script>${motion ? `\n      ${motionScript(show.id)}` : ''}
       <script>
         // Load the RAF/audio player only in interactive preview mode
         // (URL has ?preview=1). The render pipeline loads the page without

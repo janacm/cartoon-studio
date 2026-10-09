@@ -1,0 +1,202 @@
+{
+  "name": "The Green Balloon (Full)",
+  "scene": "backyard",
+  "characters": [
+    {
+      "id": "jane",
+      "svg": "jane",
+      "x": 0.27,
+      "y": 0.98,
+      "scale": 1.9,
+      "voice": "kokoro:af_heart",
+      "enter": "left"
+    },
+    {
+      "id": "max",
+      "svg": "max",
+      "x": 0.71,
+      "y": 0.98,
+      "scale": 1.75,
+      "voice": "kokoro:am_fenrir@1.1",
+      "enter": {
+        "from": "right",
+        "at": 0.4
+      }
+    }
+  ],
+  "props": [
+    {
+      "id": "balloon",
+      "svg": "props/balloon-green.svg",
+      "x": 0.6,
+      "y": 0.2,
+      "scale": 0.3,
+      "rotate": -12,
+      "float": 0.5
+    }
+  ],
+  "lines": [
+    {
+      "speaker": "max",
+      "text": "Jane, look! There's a green balloon stuck in that tree.",
+      "actions": [
+        {
+          "do": "surprise",
+          "at": 0.1
+        },
+        {
+          "do": "look",
+          "to": "balloon",
+          "at": 0.6
+        },
+        {
+          "do": "look",
+          "who": "jane",
+          "to": "balloon",
+          "at": 1.4,
+          "duration": 3
+        }
+      ]
+    },
+    {
+      "speaker": "jane",
+      "text": "Oh no. Somebody must have lost it. Can we get it down?",
+      "camera": "push",
+      "actions": [
+        {
+          "do": "shake",
+          "at": 0.1,
+          "count": 2
+        },
+        {
+          "do": "turn",
+          "to": "max",
+          "at": "end-1.5"
+        }
+      ]
+    },
+    {
+      "speaker": "max",
+      "text": "I can't reach it. Maybe if I jump really, really high.",
+      "actions": [
+        {
+          "do": "look",
+          "to": "balloon",
+          "at": 0,
+          "duration": 1.4
+        },
+        {
+          "do": "jump",
+          "at": "end-0.5",
+          "height": 0.35
+        }
+      ]
+    },
+    {
+      "speaker": "jane",
+      "text": "Wait, I have an idea. Let's ask the wind to help us.",
+      "actions": [
+        {
+          "do": "hop",
+          "count": 1,
+          "at": 0
+        },
+        {
+          "do": "turn",
+          "who": "max",
+          "to": "jane",
+          "at": 0.3
+        },
+        {
+          "do": "walk",
+          "to": 0.33,
+          "at": 0.4
+        },
+        {
+          "do": "nod",
+          "at": 1.6
+        }
+      ]
+    },
+    {
+      "speaker": "max",
+      "text": "Ask the wind? That's silly. Hey, it worked! Here it comes!",
+      "actions": [
+        {
+          "do": "shake",
+          "at": 0.8
+        },
+        {
+          "do": "move",
+          "who": "balloon",
+          "to": {
+            "x": 0.5,
+            "y": 0.56,
+            "rotate": 0
+          },
+          "at": "end-2.6",
+          "duration": 3.2,
+          "drift": 0.035
+        },
+        {
+          "do": "surprise",
+          "at": "end-2.4"
+        },
+        {
+          "do": "look",
+          "to": "balloon",
+          "at": "end-2.5",
+          "duration": 3.4
+        },
+        {
+          "do": "look",
+          "who": "jane",
+          "to": "balloon",
+          "at": "end-2.3",
+          "duration": 3.2
+        },
+        {
+          "do": "hop",
+          "at": "end-0.8"
+        }
+      ]
+    },
+    {
+      "speaker": "jane",
+      "text": "Now let's find out who lost it. Teamwork!",
+      "actions": [
+        {
+          "do": "hop",
+          "at": "end-0.7"
+        },
+        {
+          "do": "hop",
+          "who": "max",
+          "at": "end-0.6"
+        },
+        {
+          "do": "exit",
+          "who": "max",
+          "to": "right",
+          "at": "end+0.4"
+        },
+        {
+          "do": "move",
+          "who": "balloon",
+          "to": {
+            "x": 1.25,
+            "y": 0.42
+          },
+          "at": "end+0.6",
+          "duration": 2.2,
+          "drift": 0.02
+        },
+        {
+          "do": "exit",
+          "to": "right",
+          "at": "end+0.8"
+        }
+      ]
+    }
+  ]
+}

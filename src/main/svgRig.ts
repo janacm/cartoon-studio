@@ -130,24 +130,20 @@ export function rigSvg(svg: string): { svg: string; rigged: boolean } {
   return { svg: svg.replace(hit.full, rig), rigged: true };
 }
 
-// Eye-anchored mouth detection. Walks every <path>, scores pairs as
-// candidate eyes (similar size, similar y, separated horizontally by a
-// reasonable amount), then finds the best mouth candidate below the eye
-// midpoint. Pure geometry — the SVG itself encodes everything we need.
-function findMouthByEyes(svg: string): PathHit | null {
-  const vb = parseViewBox(svg) ?? { w: 2048, h: 2048 };
-  type ParsedPath = {
-    full: string;
-    d: string;
-    fill: string;
-    bbox: { x: number; y: number; w: number; h: number };
-    cx: number;
-    cy: number;
-    nw: number; // normalized width
-    nh: number; // normalized height
-    aspect: number;
-  };
+type ParsedPath = {
+  full: string;
+  d: string;
+  fill: string;
+  bbox: { x: number; y: number; w: number; h: number };
+  cx: number;
+  cy: number;
+  nw: number; // normalized width
+  nh: number; // normalized height
+  aspect: number;
+  offset: number; // index of the tag in the SVG source (paint order)
+};
 
+function parsePaths(svg: string, vb: { w: number; h: number }): ParsedPath[] {
   const all: ParsedPath[] = [];
   const pathRe = /<path\b[^>]*\bd="([^"]+)"[^>]*\/?>(?:\s*<\/path>)?/g;
   let m: RegExpExecArray | null;
@@ -167,9 +163,18 @@ function findMouthByEyes(svg: string): PathHit | null {
       nw: bb.w / vb.w,
       nh: bb.h / vb.h,
       aspect: bb.h > 0 ? bb.w / bb.h : 999,
+      offset: m.index,
     });
   }
+  return all;
+}
 
+// Best pair of eye-like paths. `accept` can veto a pair (tagEyes uses it to
+// insist the eyes sit above the rigged mouth).
+function findEyePair(
+  all: ParsedPath[],
+  accept?: (a: ParsedPath, b: ParsedPath) => boolean,
+): [ParsedPath, ParsedPath] | null {
   // Eye candidates: roughly circular, sensible size, in the upper 70%
   // of the canvas (eyes are above the chin no matter how tall).
   const eyeCandidates = all.filter(
@@ -195,6 +200,7 @@ function findMouthByEyes(svg: string): PathHit | null {
       if (yDiff > 0.05) continue;
       if (xDist < 0.04) continue;
       if (xDist > 0.40) continue;
+      if (accept && !accept(a, b)) continue;
       // Bigger eyes are more reliable signals; closer-y is better; less
       // important: minor x-distance preference (typical eye separation
       // is ~1× eye width).
@@ -205,6 +211,17 @@ function findMouthByEyes(svg: string): PathHit | null {
       }
     }
   }
+  return bestPair;
+}
+
+// Eye-anchored mouth detection. Walks every <path>, scores pairs as
+// candidate eyes (similar size, similar y, separated horizontally by a
+// reasonable amount), then finds the best mouth candidate below the eye
+// midpoint. Pure geometry — the SVG itself encodes everything we need.
+function findMouthByEyes(svg: string): PathHit | null {
+  const vb = parseViewBox(svg) ?? { w: 2048, h: 2048 };
+  const all = parsePaths(svg, vb);
+  const bestPair = findEyePair(all);
   if (!bestPair) return null;
 
   const [eyeA, eyeB] = bestPair;
@@ -239,6 +256,220 @@ function findMouthByEyes(svg: string): PathHit | null {
   }
   if (!best) return null;
   return { full: best.p.full, d: best.p.d, bbox: best.p.bbox };
+}
+
+// ---------------------------------------------------------------------------
+// Eye rig for blinking and gaze (used by the motion layer, see motion.ts).
+//
+// Character art is usually a black silhouette with flat colour shapes on
+// top, so squashing an eye white would expose black. Instead each eye gets
+// a pair of lids (face-coloured shapes with a lash line) clipped to the eye
+// white's own path; the runtime slides them in to blink. Pupils get a class
+// and their allowed travel so the runtime can shift them to look around.
+//
+//   <g class="cs-lids" clip-path="url(#<prefix>-eye0)">
+//     <g class="cs-lid-up"   data-cs-open="-dy">...</g>   open = slid out
+//     <g class="cs-lid-down" data-cs-open="+dy">...</g>
+//   </g>
+//   <path class="cs-pupil" data-cs-gaze="left right up down" .../>
+//
+// Only paths with no transform or an identity transform take part, so the
+// coordinates from pathBbox are the ones the browser draws.
+
+export type EyeRigResult = { svg: string; eyes: number; pupils: number };
+
+function fillLuma(fill: string): number | null {
+  const f = fill.trim().toLowerCase();
+  const rgb = f.match(/^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/);
+  if (rgb) return 0.299 * +rgb[1] + 0.587 * +rgb[2] + 0.114 * +rgb[3];
+  const hex = f.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/);
+  if (hex) {
+    const h = hex[1].length === 3 ? hex[1].replace(/./g, '$&$&') : hex[1];
+    const n = parseInt(h, 16);
+    return 0.299 * (n >> 16) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255);
+  }
+  if (f === 'white') return 255;
+  if (f === 'black') return 0;
+  return null;
+}
+
+function hasIdentityTransform(tag: string): boolean {
+  const t = tag.match(/\btransform="([^"]*)"/)?.[1];
+  return t === undefined || /^\s*translate\(\s*0(?:\.0+)?[\s,]+0(?:\.0+)?\s*\)\s*$/.test(t);
+}
+
+// Centre of the rigged mouth: the translate on <g class="mouth-rig">, or on
+// the plain <g> wrapping <g class="mouth-wrap"> (older rigs, e.g. bill.svg).
+function mouthRigCenter(svg: string): { x: number; y: number } | null {
+  const num = '(-?[\\d.]+)[\\s,]+(-?[\\d.]+)';
+  const m =
+    svg.match(new RegExp(`class="mouth-rig"[^>]*transform="translate\\(\\s*${num}`)) ??
+    svg.match(new RegExp(`<g\\b[^>]*transform="translate\\(\\s*${num}[^"]*"[^>]*>\\s*<g class="mouth-wrap"`));
+  return m ? { x: +m[1], y: +m[2] } : null;
+}
+
+function contains(bb: ParsedPath['bbox'], x: number, y: number): boolean {
+  return x >= bb.x && x <= bb.x + bb.w && y >= bb.y && y <= bb.y + bb.h;
+}
+
+function center(p: ParsedPath): { x: number; y: number } {
+  return { x: p.bbox.x + p.bbox.w / 2, y: p.bbox.y + p.bbox.h / 2 };
+}
+
+const n2 = (v: number): string => (Math.round(v * 100) / 100).toString();
+
+export function tagEyes(svg: string, prefix: string): EyeRigResult {
+  const none = { svg, eyes: 0, pupils: 0 };
+  if (svg.includes('class="cs-lids"')) return none;
+  const vb = parseViewBox(svg) ?? { w: 2048, h: 2048 };
+  const all = parsePaths(svg, vb).filter((p) => hasIdentityTransform(p.full));
+  const mouth = mouthRigCenter(svg);
+  const luma = (p: ParsedPath): number | null => fillLuma(p.fill);
+  const isLight = (p: ParsedPath): boolean => (luma(p) ?? 0) >= 110;
+  const isDark = (p: ParsedPath): boolean => {
+    const l = luma(p);
+    return l !== null && l < 80;
+  };
+
+  // When the mouth is rigged, the eyes must sit above it and near its x.
+  const pair = findEyePair(all, (a, b) => {
+    if (!mouth) return true;
+    const midX = ((a.cx + b.cx) / 2) * vb.w;
+    const midY = ((a.cy + b.cy) / 2) * vb.h;
+    const span = Math.abs(a.cx - b.cx) * vb.w;
+    return midY < mouth.y && Math.abs(midX - mouth.x) < span * 1.5 && mouth.y - midY < span * 4;
+  });
+  if (!pair) return none;
+
+  // Each eye is a light "container" (the eye white, whose path becomes the
+  // clip) and the dark pupils inside it. The detected pair is either the
+  // whites themselves or the pupils (when the whites are one merged shape).
+  type Eye = { container: ParsedPath; box: ParsedPath['bbox']; pupils: ParsedPath[] };
+  const eyes: Eye[] = [];
+  for (const e of pair) {
+    if (isLight(e)) {
+      const pupils = all.filter((p) => {
+        if (!isDark(p) || p.offset <= e.offset) return false;
+        if (p.bbox.w > e.bbox.w * 0.5 || p.bbox.h > e.bbox.h * 0.5) return false;
+        const c = center(p);
+        const dx = (c.x - (e.bbox.x + e.bbox.w / 2)) / (e.bbox.w / 2);
+        const dy = (c.y - (e.bbox.y + e.bbox.h / 2)) / (e.bbox.h / 2);
+        return dx * dx + dy * dy < 0.72;
+      });
+      eyes.push({ container: e, box: e.bbox, pupils });
+    } else if (isDark(e)) {
+      const c = center(e);
+      const container = all
+        .filter(
+          (p) =>
+            isLight(p) &&
+            p.offset < e.offset &&
+            contains(p.bbox, c.x, c.y) &&
+            p.nw <= 0.4 &&
+            p.nh <= 0.3 &&
+            !(mouth && contains(p.bbox, mouth.x, mouth.y)),
+        )
+        .sort((a, b) => a.bbox.w * a.bbox.h - b.bbox.w * b.bbox.h)[0];
+      if (container) eyes.push({ container, box: container.bbox, pupils: [e] });
+    }
+  }
+  if (eyes.length === 0) return none;
+
+  // Two pupils in one merged white: split the white's box between them.
+  if (eyes.length === 2 && eyes[0].container === eyes[1].container) {
+    const [a, b] = eyes[0].pupils[0].cx < eyes[1].pupils[0].cx ? eyes : [eyes[1], eyes[0]];
+    const bb = a.container.bbox;
+    const split = (center(a.pupils[0]).x + center(b.pupils[0]).x) / 2;
+    a.box = { x: bb.x, y: bb.y, w: split - bb.x, h: bb.h };
+    b.box = { x: split, y: bb.y, w: bb.x + bb.w - split, h: bb.h };
+  }
+
+  // Lid colour: the face, i.e. the smallest light shape under the mouth.
+  const containers = new Set(eyes.map((e) => e.container));
+  const face = mouth
+    ? all
+        .filter(
+          (p) =>
+            isLight(p) &&
+            !containers.has(p) &&
+            contains(p.bbox, mouth.x, mouth.y) &&
+            p.nw > 0.1,
+        )
+        .sort((a, b) => a.bbox.w * a.bbox.h - b.bbox.w * b.bbox.h)[0]
+    : undefined;
+  const lidFill = face?.fill ?? eyes[0].container.fill;
+  const outline = all
+    .filter(isDark)
+    .sort((a, b) => b.bbox.w * b.bbox.h - a.bbox.w * a.bbox.h)[0];
+  const lashFill = outline?.fill ?? '#111111';
+
+  // Build the lid markup per container (one clip, one lid pair per eye box)
+  // and insert it after the last pupil drawn on that container.
+  const inserts = new Map<number, string>();
+  const groups = new Map<ParsedPath, Eye[]>();
+  for (const e of eyes) groups.set(e.container, [...(groups.get(e.container) ?? []), e]);
+  let n = 0;
+  for (const [container, list] of groups) {
+    const clipId = `${prefix}-eye${n++}`;
+    const lids = list
+      .map(({ box: b }) => {
+        const pad = Math.max(b.w, b.h) * 0.06;
+        const x0 = b.x - pad;
+        const x1 = b.x + b.w + pad;
+        const y0 = b.y - pad;
+        const y1 = b.y + b.h + pad;
+        const m = b.y + b.h * 0.55;
+        const sag = b.h * 0.1;
+        const lash = Math.max(b.h * 0.05, 4);
+        const cx = b.x + b.w / 2;
+        const curve = `Q ${n2(cx)} ${n2(m + sag)} `;
+        const upOpen = -(m + sag - y0 + lash);
+        const downOpen = y1 - m;
+        return (
+          `<g class="cs-lid-up" data-cs-open="${n2(upOpen)}" transform="translate(0 ${n2(upOpen)})">` +
+          `<path d="M ${n2(x0)} ${n2(y0)} H ${n2(x1)} V ${n2(m)} ${curve}${n2(x0)} ${n2(m)} Z" fill="${lidFill}"/>` +
+          `<path d="M ${n2(x0)} ${n2(m)} ${curve}${n2(x1)} ${n2(m)}" fill="none" stroke="${lashFill}" stroke-width="${n2(lash)}" stroke-linecap="round"/>` +
+          `</g>` +
+          `<g class="cs-lid-down" data-cs-open="${n2(downOpen)}" transform="translate(0 ${n2(downOpen)})">` +
+          `<path d="M ${n2(x0)} ${n2(m)} ${curve}${n2(x1)} ${n2(m)} V ${n2(y1)} H ${n2(x0)} Z" fill="${lidFill}"/>` +
+          `</g>`
+        );
+      })
+      .join('');
+    const markup =
+      `<clipPath id="${clipId}"><path d="${container.d}"/></clipPath>` +
+      `<g class="cs-lids" clip-path="url(#${clipId})" visibility="hidden">${lids}</g>`;
+    const tag = [container, ...list.flatMap((e) => e.pupils)].sort((a, b) => b.offset - a.offset)[0];
+    inserts.set(tag.offset + tag.full.length, markup);
+  }
+
+  // Pupils: allowed travel (in path units) to look fully left/right/up/down,
+  // ending at the same spot in each eye so the gaze stays coherent.
+  const edits = [...inserts].map(([at, text]) => ({ at, text }));
+  let pupils = 0;
+  for (const { box: b, pupils: list } of eyes) {
+    for (const p of list) {
+      const c = center(p);
+      const rx = Math.max(0, Math.min(b.w * 0.26, b.w / 2 - p.bbox.w / 2 - b.w * 0.1));
+      const ry = Math.max(0, Math.min(b.h * 0.2, b.h / 2 - p.bbox.h / 2 - b.h * 0.12));
+      const bx = b.x + b.w / 2;
+      const by = b.y + b.h / 2;
+      const gaze = [bx - rx - c.x, bx + rx - c.x, by - ry - c.y, by + ry - c.y].map(n2).join(' ');
+      const cls = p.full.search(/\sclass="/);
+      edits.push({
+        at: p.offset + '<path'.length,
+        text: `${cls >= 0 ? '' : ' class="cs-pupil"'} data-cs-gaze="${gaze}"`,
+      });
+      if (cls >= 0) edits.push({ at: p.offset + cls + ' class="'.length, text: 'cs-pupil ' });
+      pupils++;
+    }
+  }
+
+  // Splice from the end so earlier offsets stay valid.
+  edits.sort((a, b) => b.at - a.at);
+  let out = svg;
+  for (const { at, text } of edits) out = out.slice(0, at) + text + out.slice(at);
+  return { svg: out, eyes: eyes.length, pupils };
 }
 
 export type ReplaceMouthOptions = {
