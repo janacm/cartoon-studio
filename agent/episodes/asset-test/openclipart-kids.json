@@ -1,0 +1,13 @@
+{
+  "name": "Asset Test: OpenClipart Kids",
+  "scene": "park",
+  "characters": [
+    { "id": "sam", "svg": "openclipart-168301-kid.svg", "x": 0.3, "y": 0.98, "scale": 2.6, "voice": "kokoro:af_heart" },
+    { "id": "leo", "svg": "openclipart-264055-boy.svg", "x": 0.7, "y": 0.98, "scale": 2.6, "voice": "kokoro:am_fenrir@1.1" }
+  ],
+  "lines": [
+    { "speaker": "sam", "text": "Hi Leo! Do you want to fly my new kite with me?" },
+    { "speaker": "leo", "text": "Yes please! But the wind is very quiet today." },
+    { "speaker": "sam", "text": "Then we will just have to run really fast!" }
+  ]
+}
