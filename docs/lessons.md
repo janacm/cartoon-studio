@@ -4,6 +4,7 @@ Things we found out the hard way while building the headless pipeline. Add an en
 
 ## Rendering
 
+- **HyperFrames can fail with "Navigation timeout of 60000 ms exceeded" in every worker even when nothing is wrong with the episode.** It happened three times in a row right after the repo was moved to a new folder, then never again with the same files. Chrome loaded the page fine on its own, and the WAV headers checked out. If it happens, retry before debugging, and try `--workers 1` on the HyperFrames CLI to confirm.
 - **Everything that moves has to be on the one GSAP timeline, driven by seeded values.** HyperFrames renders by seeking that timeline frame by frame in parallel workers. `requestAnimationFrame`, CSS animations, `Date.now` and `Math.random` give different results per worker. Two renders of an episode should produce identical frames; check that after any motion change.
 - **Keep `requestAnimationFrame` and `performance.now` out of inline scripts in the composition.** HyperFrames scans inline scripts for them and switches to screenshot capture, which breaks the timeline seek and the lip sync. The preview player lives in an external `player.js` for this reason.
 - **Run the HyperFrames CLI with plain `node`, not with Electron as Node.** The desktop app spawns its own Electron binary, which sits inside an `.app` bundle. Executing that directly is unreliable outside the app.
