@@ -35,7 +35,7 @@ flowchart LR
 
 | Stage | Code | Runs | Cost | Typical time |
 |---|---|---|---|---|
-| Voice | `agent/render-episode.ts`, `agent/kokoro_tts.py` | Kokoro on Apple Silicon via MLX, `say`, or the ElevenLabs API | Free locally | About 4 s for six Kokoro lines |
+| Voice | `agent/render-episode.ts`, `agent/kokoro_tts.py`, or tts-service | Kokoro on Apple Silicon via MLX, Edge Read Aloud voices (online, through tts-service), `say`, or the ElevenLabs API | Free locally | About 4 s for six Kokoro lines; with tts-service, about 4 s for six mixed Kokoro and Edge lines |
 | Lip sync | `rhubarbCues()` in `agent/render-episode.ts` | Rhubarb 1.14.0 (Intel build, runs under Rosetta) | Free | About 4–7 s per line |
 | Composition | `src/main/composition.ts`, `src/main/motion.ts`, `agent/episode-motion.ts` | Node, no browser | Free | Under 1 s |
 | Render | HyperFrames CLI | chrome-headless-shell and FFmpeg | Free | About 35–60 s for a 30 s episode |

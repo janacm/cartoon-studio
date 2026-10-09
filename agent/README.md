@@ -25,15 +25,22 @@ The MP4 goes next to the episode file unless you pass `-o`. Working files (audio
 - `scene`: bundled `backyard`, `living-room`, `park`, `street`, or a path to an `.svg`.
 - `svg`: bundled `bill`, `jane`, `max`, `ted`, or a path to a rigged `.svg`, which needs `mouth-A` to `mouth-H` and `mouth-X` groups. `npm run rig` adds them to a new character.
 - `x`, `y`: where the character's feet go, as a fraction of the 1920x1080 stage. `scale` 1 is 20% of the stage width.
-- `voice`: `say:<macOS voice>`, `kokoro:<voice>[@speed]` or `elevenlabs:<voice id>`; see [Voices](#voices). A line can override its speaker's voice with its own `voice`.
+- `voice`: `say:<macOS voice>`, `kokoro:<voice>[@speed]`, `edge:<voice>[@speed]` or `elevenlabs:<voice id>`; see [Voices](#voices). A line can override its speaker's voice with its own `voice`.
 
 ## Voices
 
 - `say:<macOS voice>`: free, local. List them with `say -v '?'`.
-- `kokoro:<voice>[@speed]`, e.g. `kokoro:af_heart` or `kokoro:am_fenrir@1.1`: free, local, and much more natural than `say`. Runs Kokoro-82M v1.0 on Apple Silicon through MLX (`mlx-community/Kokoro-82M-bf16`; set `KOKORO_MODEL` to use another build). `speed` is a rate multiplier from 0.5 to 2, default 1. All of an episode's Kokoro lines are voiced in one call to `agent/kokoro_tts.py`, a uv script that declares its own dependencies, so the model loads once. The first run builds a ~410 MB environment in uv's cache and downloads ~330 MB of weights and voices to the Hugging Face cache. After that, six lines take about 4 s.
+- `kokoro:<voice>[@speed]`, e.g. `kokoro:af_heart` or `kokoro:am_fenrir@1.1`: free, local, and much more natural than `say`. Runs Kokoro-82M v1.0 on Apple Silicon through MLX (`mlx-community/Kokoro-82M-bf16`; set `KOKORO_MODEL` to use another build). `speed` is a rate multiplier from 0.5 to 2, default 1. When [tts-service](#tts-service) is running, Kokoro lines go to it. Otherwise all of an episode's Kokoro lines are voiced in one call to `agent/kokoro_tts.py`, a uv script that declares its own dependencies, so the model loads once. The first run builds a ~410 MB environment in uv's cache and downloads ~330 MB of weights and voices to the Hugging Face cache. After that, six lines take about 4 s.
+- `edge:<voice>[@speed]`, e.g. `edge:en-US-AnaNeural` (a child voice tagged "Cartoon") or `edge:en-US-GuyNeural@1.1`: Microsoft Edge's online Read Aloud voices, free and with no key. Needs tts-service and an internet connection. The service is unofficial and can break or throttle, and its commercial-use status is unclear: for published, monetised content, use the same voices through Azure AI Speech.
 - `elevenlabs:<voice id>`: paid, needs `ELEVENLABS_API_KEY` in `agent/.env`.
 
-`say` and `kokoro` voices have no word timings, so they need Rhubarb.
+`say`, `kokoro` and `edge` voices go through Rhubarb for lip sync. Edge's word timings are also saved in each line's metadata.
+
+### tts-service
+
+A small local HTTP service that keeps Kokoro loaded and adds Edge voices. The renderer checks `GET /health` at `TTS_SERVICE_URL` (default `http://127.0.0.1:8787`) and, when it answers, sends all uncached `kokoro:` and `edge:` lines in one `POST /synthesize/batch` request. Each line comes back as a 24 kHz mono WAV, loudness-normalised to -16 LUFS so Kokoro (about 6 dB quieter as generated) matches Edge. If the service isn't running, `kokoro:` falls back to `agent/kokoro_tts.py` and `edge:` stops with a message asking you to start it. Lines cached with and without the service are cached separately, because the service normalises them.
+
+`episodes/green-balloon-edge.json` gives Jane `edge:en-US-AnaNeural` and Max `kokoro:am_fenrir@1.1`.
 
 English Kokoro voices, with the overall grades from the model's [VOICES.md](https://huggingface.co/hexgrad/Kokoro-82M/blob/main/VOICES.md). Higher grades come from more and cleaner training audio.
 
@@ -138,6 +145,7 @@ All motion is planned when the composition is built, using a PRNG seeded from th
 - `npm install` (the install scripts fetch chrome-headless-shell).
 - Rhubarb Lip Sync 1.14.0 at `~/.local/opt/rhubarb-lip-sync-1.14.0/`, or set `RHUBARB_PATH`. Without it, only ElevenLabs voices work, using the app's word-timing heuristic.
 - [uv](https://docs.astral.sh/uv/), for Kokoro voices. It needs an Apple Silicon Mac.
+- tts-service, for Edge voices (optional for Kokoro). Set `TTS_SERVICE_URL` if it isn't on `http://127.0.0.1:8787`.
 
 ## How it works
 
